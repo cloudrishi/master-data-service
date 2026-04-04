@@ -1,0 +1,36 @@
+### Register User
+POST http://localhost:8080/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "firstName": "Rishi",
+  "lastName": "P",
+  "email": "rishi@example.com",
+  "password": "Test@1234",
+  "timezone": "America/Chicago",
+  "preferredLanguage": "en",
+  "addresses": [
+    {
+      "addressType": "HOME",
+      "street": "123 Main St",
+      "city": "Round Rock",
+      "state": "TX",
+      "zip": "78664",
+      "country": "USA",
+      "isDefault": true
+    }
+  ]
+}
+
+### Login
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "rishi@example.com",
+  "password": "Test@1234"
+}
+
+### Get Current User (replace TOKEN below)
+GET http://localhost:8080/api/v1/master-data/me
+Authorization: Bearer TOKEN
