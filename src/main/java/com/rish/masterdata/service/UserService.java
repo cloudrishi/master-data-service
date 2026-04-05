@@ -145,11 +145,12 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public UserResponse getUserById(String userId) {
+
         User user = userRepository
                 .findById(userId)
                 .orElseThrow(() ->
                         new UserNotFoundException("User not found"));
-        return null;
+        return mapToUserResponse(user);
     }
 
     // Mapping User + Addresses

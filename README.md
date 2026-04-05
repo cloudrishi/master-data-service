@@ -1,6 +1,6 @@
 # master-data-service
 
-Production-grade Spring Boot microservice implementing user registration, authentication, and master data management with JWT security, BCrypt password hashing, and PostgreSQL schema isolation.
+Production-grade Spring Boot microservice implementing user registration, authentication, and master data management with JWT security, BCrypt password hashing, GitHub OAuth2 social login, and PostgreSQL schema isolation.
 
 ---
 
@@ -9,8 +9,9 @@ Production-grade Spring Boot microservice implementing user registration, authen
 | Layer | Technology |
 |---|---|
 | Language | Java 21 (Temurin LTS) |
-| Framework | Spring Boot 3.2 |
+| Framework | Spring Boot 3.2.5 |
 | Security | Spring Security + JWT (jjwt 0.12.3) |
+| OAuth2 | GitHub OAuth2 with custom token response client |
 | ORM | Spring Data JPA / Hibernate |
 | Database | PostgreSQL 16 |
 | Connection Pool | HikariCP |
@@ -27,25 +28,25 @@ Production-grade Spring Boot microservice implementing user registration, authen
 Client (HTTP)
     │
     ▼
-JwtAuthFilter          ← validates JWT on every request
+JwtAuthFilter              ← validates JWT on every request
     │
     ▼
-SecurityFilterChain    ← public vs protected route rules
+SecurityFilterChain        ← public vs protected route rules
     │
     ▼
-Controller Layer       ← accepts Request DTOs, returns Response DTOs
+Controller Layer           ← accepts Request DTOs, returns Response DTOs
     │
     ▼
-Service Layer          ← business logic, BCrypt, JWT generation
+Service Layer              ← business logic, BCrypt, JWT generation
     │
     ▼
-Repository Layer       ← JpaRepository, auto-generated SQL
+Repository Layer           ← JpaRepository, auto-generated SQL
     │
     ▼
-Entity Layer           ← JPA entities, DB table mapping
+Entity Layer               ← JPA entities, DB table mapping
     │
     ▼
-PostgreSQL             ← devdb / masterdata schema
+PostgreSQL                 ← devdb / masterdata schema
 ```
 
 ### Key Design Decisions
@@ -56,6 +57,7 @@ PostgreSQL             ← devdb / masterdata schema
 - **BCrypt hashing** — Passwords never stored in plain text. BCrypt with salt ensures same password hashes differently every time.
 - **Separate credentials table** — `user_credentials` is separate from `users`. Security data is isolated from identity data.
 - **Soft-deletable account status** — Users move through `PENDING_VERIFICATION → ACTIVE → INACTIVE/LOCKED/DELETED` states. Hard deletes never used.
+- **Custom OAuth2 token client** — GitHub's OAuth2 implementation predates RFC 6749. A custom token response client handles GitHub's non-standard token exchange format.
 
 ---
 
@@ -80,7 +82,7 @@ src/main/java/com/rish/masterdata/
 │   ├── UserCredentials.java
 │   ├── AccountStatus.java            ← enum
 │   ├── AddressType.java              ← enum
-│   ├── AuthProvider.java             ← enum
+│   ├── AuthProvider.java             ← enum (LOCAL, GITHUB, GOOGLE)
 │   └── Role.java                     ← enum
 ├── exception/
 │   ├── GlobalExceptionHandler.java
@@ -94,7 +96,10 @@ src/main/java/com/rish/masterdata/
 │   └── UserCredentialsRepository.java
 ├── security/
 │   ├── JwtAuthFilter.java
-│   └── SecurityConfig.java
+│   ├── SecurityConfig.java
+│   ├── OAuth2SuccessHandler.java
+│   ├── GitHubOAuth2TokenResponseClient.java
+│   └── HttpCookieOAuth2AuthorizationRequestRepository.java
 └── service/
     ├── UserService.java
     └── JwtService.java
@@ -108,8 +113,10 @@ src/main/java/com/rish/masterdata/
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/v1/auth/register` | Register new user |
+| POST | `/api/v1/auth/register` | Register new user with email/password |
 | POST | `/api/v1/auth/login` | Login, returns JWT |
+| GET | `/oauth2/authorization/github` | Initiate GitHub OAuth2 login |
+| GET | `/api/v1/auth/oauth2/success` | OAuth2 callback — returns JWT |
 
 ### Master Data (Protected — requires JWT)
 
@@ -117,6 +124,47 @@ src/main/java/com/rish/masterdata/
 |---|---|---|
 | GET | `/api/v1/master-data/me` | Get current user profile |
 | GET | `/api/v1/master-data/users/{userId}` | Get user by ID |
+
+---
+
+## Authentication Flows
+
+### Flow 1 — Email / Password
+
+```
+POST /api/v1/auth/register  ← email, password, profile
+        │
+        ▼
+BCrypt hashes password
+User saved to DB
+JWT generated
+        │
+        ▼
+AuthResponse → token + userId + email + role
+```
+
+### Flow 2 — GitHub OAuth2
+
+```
+GET /oauth2/authorization/github
+        │
+        ▼
+Redirected to GitHub login page
+        │
+        ▼
+User authorizes app
+        │
+        ▼
+GitHub redirects to callback URL
+Custom token client exchanges code for token
+GitHub profile fetched
+User created/found in DB
+JWT generated
+        │
+        ▼
+Redirected to /api/v1/auth/oauth2/success?token=...
+AuthResponse → token + userId + email + role
+```
 
 ---
 
@@ -215,7 +263,7 @@ masterdata.user_credentials
 ├── id                  UUID (PK)
 ├── user_id             UUID (FK → users.id) UNIQUE
 ├── hashed_password     VARCHAR NOT NULL
-├── auth_provider       VARCHAR (LOCAL | GOOGLE | GITHUB)
+├── auth_provider       VARCHAR (LOCAL | GITHUB | GOOGLE)
 ├── provider_user_id    VARCHAR
 ├── failed_login_attempts INTEGER
 ├── last_login_at       TIMESTAMP
@@ -233,8 +281,29 @@ masterdata.user_credentials
 - **BCrypt** — All passwords hashed with BCrypt before storage. Plain text never persisted.
 - **Ambiguous errors** — Login returns the same error for wrong email or wrong password. Prevents user enumeration.
 - **Account status enforcement** — Users in `PENDING_VERIFICATION`, `LOCKED`, or `INACTIVE` state cannot login.
-- **Stateless sessions** — `SessionCreationPolicy.STATELESS`. No server-side session storage.
+- **Stateless sessions** — `SessionCreationPolicy.STATELESS` for JWT flow. OAuth2 uses `IF_REQUIRED` for state management during the authorization code exchange.
 - **CSRF disabled** — Safe for stateless JWT REST APIs.
+- **Custom OAuth2 token client** — GitHub's OAuth2 implementation predates RFC 6749. The default Spring Security token converter fails with GitHub's response format. A custom `GitHubOAuth2TokenResponseClient` handles the token exchange directly.
+- **Cookie-based OAuth2 state** — `HttpCookieOAuth2AuthorizationRequestRepository` stores OAuth2 state in HttpOnly cookies instead of session, compatible with stateless architecture.
+
+---
+
+## GitHub OAuth2 Setup
+
+1. Go to `github.com/settings/developers`
+2. Click **OAuth Apps → New OAuth App**
+3. Fill in:
+
+```
+Application name           : master-data-service
+Homepage URL               : http://localhost:8080
+Authorization callback URL : http://localhost:8080/login/oauth2/code/github
+```
+
+4. Click **Register Application**
+5. Copy **Client ID**
+6. Click **Generate a new client secret** → copy immediately
+7. Add both to IntelliJ environment variables
 
 ---
 
@@ -266,13 +335,19 @@ docker exec -it postgres-dev psql -U postgres -d devdb -c "
 "
 ```
 
-### 3. Set Environment Variable
+### 3. Set Environment Variables
 
 ```bash
-export JWT_SECRET=<your-base64-secret>
-
-# Generate a secret
+# Generate JWT secret
 openssl rand -base64 32
+```
+
+In IntelliJ Run Configuration → Environment Variables:
+
+```
+JWT_SECRET           = <generated secret>
+GITHUB_CLIENT_ID     = <from GitHub OAuth App>
+GITHUB_CLIENT_SECRET = <from GitHub OAuth App>
 ```
 
 ### 4. Run
@@ -290,6 +365,8 @@ App starts on `http://localhost:8080`
 | Variable | Description | Required |
 |---|---|---|
 | `JWT_SECRET` | Base64 encoded HMAC SHA256 signing key (min 32 bytes) | Yes |
+| `GITHUB_CLIENT_ID` | GitHub OAuth App Client ID | Yes |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth App Client Secret | Yes |
 
 ---
 
@@ -302,7 +379,7 @@ All errors return a consistent structure:
   "status": 409,
   "error": "Conflict",
   "message": "Email already registered",
-  "timestamp": "2026-04-04T08:00:00"
+  "timestamp": "2026-04-05T08:00:00"
 }
 ```
 
@@ -317,8 +394,16 @@ All errors return a consistent structure:
 
 ---
 
+## Technical Notes
+
+### Why A Custom GitHub OAuth2 Token Client?
+
+GitHub's OAuth2 implementation was built in 2010 — two years before RFC 6749 was finalized. Their token endpoint response format has historically been inconsistent with the standard that Spring Security expects. Rather than fighting framework internals, a custom `GitHubOAuth2TokenResponseClient` calls GitHub's token endpoint directly with the correct headers and parses the response explicitly. This is a known gap between GitHub's implementation and the OAuth2 spec that neither GitHub nor Spring Security has fully resolved in over 14 years.
+
+---
+
 ## Author
 
-Rishi — Senior Backend Engineer  
-Austin / Round Rock, TX  
+Rishi — Senior Backend Engineer
+Austin / Round Rock, TX
 [github.com/cloudrishi](https://github.com/cloudrishi)

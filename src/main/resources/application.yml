@@ -18,6 +18,24 @@ spring:
         format_sql: true
         default_schema: masterdata
 
+  security:
+    oauth2:
+      client:
+        registration:
+          github:
+            client-id: ${GITHUB_CLIENT_ID}
+            client-secret: ${GITHUB_CLIENT_SECRET}
+            redirect-uri: http://localhost:8080/login/oauth2/code/github
+            scope:
+              - user:email
+              - read:user
+        provider:
+          github:
+            token-uri: https://github.com/login/oauth/access_token
+            authorization-uri: https://github.com/login/oauth/authorize
+            user-info-uri: https://api.github.com/user
+            user-name-attribute: id
+
 jwt:
   secret: ${JWT_SECRET}
   expiration: 86400000

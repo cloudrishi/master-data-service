@@ -2,16 +2,15 @@ package com.rish.masterdata.controller;
 
 
 import com.rish.masterdata.dto.UserResponse;
+import com.rish.masterdata.service.JwtService;
 import com.rish.masterdata.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @Slf4j
 @RestController
@@ -20,17 +19,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class MasterDataController {
 
     private final UserService userService;
+    private final JwtService jwtService;
 
     // Get Current User
     @GetMapping("/me")
     public ResponseEntity<UserResponse> getCurrentUser(
-            @AuthenticationPrincipal String userId) {
+            @RequestHeader("Authorization") String authHeader) {
 
-        log.info("Fetching user: {}", userId);
+        String token = authHeader.substring(7);
+        String userId = jwtService.extractUserId(token);
 
-        UserResponse response = userService
-                .getUserById(userId);
-
+        UserResponse response = userService.getUserById(userId);
         return ResponseEntity.ok(response);
     }
 
