@@ -6,6 +6,8 @@ import com.rish.masterdata.dto.LoginRequest;
 import com.rish.masterdata.dto.RegistrationRequest;
 import com.rish.masterdata.service.JwtService;
 import com.rish.masterdata.service.UserService;
+import com.rish.masterdata.util.CookieUtil;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,24 +27,46 @@ public class AuthController {
     public final JwtService jwtService;
 
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> registration(@Valid @RequestBody RegistrationRequest request) {
+    public ResponseEntity<AuthResponse> registration(
+            @Valid @RequestBody RegistrationRequest request,
+            HttpServletResponse response) {
 
         log.info("Registration request for email: {}",
                 request.getEmail());
-        AuthResponse response = userService.register(request);
+        AuthResponse authResponse = userService.register(request);
+
+        // Set HttpOnly cookie
+        CookieUtil.setJwtCookie(
+                response, authResponse.getToken());
+
         return ResponseEntity
                 .status(HttpStatus.CREATED)
-                .body(response);
+                .body(authResponse);
     }
 
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(
-            @Valid @RequestBody LoginRequest request) {
+            @Valid @RequestBody LoginRequest request,
+            HttpServletResponse response
+    ) {
 
         log.info("Login request for email: {}",
                 request.getEmail());
-        AuthResponse response = userService.login(request);
-        return ResponseEntity.ok(response);
+        AuthResponse authResponse = userService.login(request);
+
+        // Set HttpOnly cookie
+        CookieUtil.setJwtCookie(
+                response, authResponse.getToken());
+
+        return ResponseEntity.ok(authResponse);
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(
+            HttpServletResponse response) {
+
+        CookieUtil.clearJwtCookie(response);
+        return ResponseEntity.ok().build();
     }
 
     // OAuth2 success redirect endpoint

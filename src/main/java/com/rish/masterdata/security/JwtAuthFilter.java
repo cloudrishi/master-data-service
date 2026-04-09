@@ -2,6 +2,7 @@ package com.rish.masterdata.security;
 
 
 import com.rish.masterdata.service.JwtService;
+import com.rish.masterdata.util.CookieUtil;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -39,36 +40,38 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             FilterChain filterChain)
             throws ServletException, IOException {
 
-        // 1. Extract Authorization header
-        String authHeader = request.getHeader("Authorization");
+        String token = null;
 
-        // 2. No token -> pass through to Security
-        //    (public endpoints handled by SecurityConfig)
-        //    The space matters in 'Bearer ' as the header format is strictly Bearer <token>.
+        // Try cookie first ← new
+        token = CookieUtil.getJwtFromCookie(request);
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        // Fall back to Authorization header
+        if (token == null) {
+            String authHeader =
+                    request.getHeader("Authorization");
+            if (authHeader != null &&
+                    authHeader.startsWith("Bearer ")) {
+                token = authHeader.substring(7);
+            }
+        }
+
+        // No token → pass through
+        if (token == null) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // 3. Extract token
-        // If the space ('Bearer ') is not accounted for,
-        // the code might crash when trying to substring the token.
-        // The reason why the starting index starts with 7 length of 'Bearer '
-        String token = authHeader.substring(7);
-
-        // 4. Validate token
+        // Validate token
         if (!jwtService.isTokenValid(token)) {
             log.warn("Invalid JWT token");
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setStatus(
+                    HttpServletResponse.SC_UNAUTHORIZED);
             return;
         }
 
-        // 5. Extract claims
         String userId = jwtService.extractUserId(token);
-        String role = jwtService.extractRole(token);
+        String role   = jwtService.extractRole(token);
 
-        // 6. Build authentication object
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(
                         userId,
@@ -76,13 +79,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                         List.of(new SimpleGrantedAuthority(role))
                 );
 
-        // 7. Set in SecurityContext
-        SecurityContextHolder.getContext().setAuthentication(authentication);
+        SecurityContextHolder.getContext()
+                .setAuthentication(authentication);
 
         log.debug("JWT authenticated userId: {}", userId);
-
-        // 8. Continue filter chain
         filterChain.doFilter(request, response);
     }
-
 }

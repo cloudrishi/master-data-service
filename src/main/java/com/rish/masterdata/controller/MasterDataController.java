@@ -24,10 +24,16 @@ public class MasterDataController {
     // Get Current User
     @GetMapping("/me")
     public ResponseEntity<UserResponse> getCurrentUser(
-            @RequestHeader("Authorization") String authHeader) {
+            @RequestHeader(value = "Authorization",
+                    required = false) String authHeader,
+            @AuthenticationPrincipal String userId) {
 
-        String token = authHeader.substring(7);
-        String userId = jwtService.extractUserId(token);
+        // userId injected from SecurityContext
+        // SecurityContext populated by JwtAuthFilter
+        // JwtAuthFilter reads from cookie OR header
+        // So userId should always be available here
+
+        log.info("Fetching user: {}", userId);
 
         UserResponse response = userService.getUserById(userId);
         return ResponseEntity.ok(response);

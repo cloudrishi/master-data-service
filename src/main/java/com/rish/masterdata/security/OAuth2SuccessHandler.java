@@ -8,10 +8,12 @@ import com.rish.masterdata.entity.UserCredentials;
 import com.rish.masterdata.repository.UserCredentialsRepository;
 import com.rish.masterdata.repository.UserRepository;
 import com.rish.masterdata.service.JwtService;
+import com.rish.masterdata.util.CookieUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
@@ -30,6 +32,9 @@ public class OAuth2SuccessHandler
     private final UserCredentialsRepository credentialsRepository;
     private final JwtService jwtService;
 
+    @Value("${app.frontend-url}")
+    private String frontendUrl;
+
     public void onAuthenticationSuccess (
             HttpServletRequest request,
             HttpServletResponse response,
@@ -44,6 +49,8 @@ public class OAuth2SuccessHandler
         String login = oAuth2User.getAttribute("login");
         String githubId = id != null ? id.toString() : login;
 
+        log.info("OAuth2 login: {} via GitHub", email);
+
         // Find or create user
         User user = userRepository.findByEmail(email)
                 .orElseGet(() -> createOAuthUser(email, login, name, githubId));
@@ -55,11 +62,13 @@ public class OAuth2SuccessHandler
                 user.getRole().name()
         );
 
-        // Redirect with token
+        // Set HttpOnly Cookie
+        CookieUtil.setJwtCookie(response, token);
+
         getRedirectStrategy().sendRedirect(
                 request,
                 response,
-                "/api/v1/auth/oauth2/success?token=" + token
+                frontendUrl + "/dashboard"
         );
     }
 
